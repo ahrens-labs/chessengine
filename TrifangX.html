@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Chess Game against TrifangX</title>
+
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<link rel="stylesheet" href="chessboard-1.0.0.min.css" />
+<script src="chessboard-1.0.0.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+
+<style>
+  #board { width: 400px; margin: 20px auto; }
+  h2{ text-align:center; font-family:"Roboto Mono",monospace;}
+  .sharp{ font-family:"Roboto Mono",monospace; font-style:italic; font-weight:50;}
+  body { background-color:#567ad6; }
+
+  .highlight-legal{position:relative;}
+  .highlight-legal::after{
+    content:''; position:absolute; top:50%; left:50%;
+    width:15px; height:15px; background:rgba(60,50,50,.6);
+    border-radius:50%; transform:translate(-50%,-50%);
+    pointer-events:none; z-index:10;
+  }
+</style>
+</head>
+<body>
+
+<h2>Play Chess against Trifang<span class="sharp">X</span></h2>
+<div id="choose-side" style="text-align:center;margin-bottom:10px;">
+  <label for="color-select">Choose your side: </label>
+  <select id="color-select">
+    <option value="white">White</option>
+    <option value="black">Black</option>
+    <option value="random">Random</option>
+  </select>
+  <button onclick="startGame()">Start Game</button>
+</div>
+
+<div style="text-align:center;margin-top:10px;">
+  Time for this move: <span id="timer">00:00.00</span>
+</div>
+
+<div id="board"></div>
+<div style="text-align:center;margin-top:10px;">
+  Turn: <span id="turn-color">White</span> |
+  Last Move: <span id="last-move">None</span>
+</div>
+
+<script>
+let game, board, playerColor='white';
+let timerInterval=null, timeElapsed=0, gameOver=false;
+
+function formatTime(h){            
+  const m = String(Math.floor(h/6000)).padStart(2,'0');
+  const s = String(Math.floor((h%6000)/100)).padStart(2,'0');
+  const c = String(h%100).padStart(2,'0');
+  return `${m}:${s}.${c}`;
+}
+function startTimer(){
+  clearInterval(timerInterval);
+  timeElapsed=0;
+  timerInterval = setInterval(()=>{ timeElapsed++; 
+    document.getElementById('timer').textContent = formatTime(timeElapsed);
+  },10);
+}
+
+function updateLastMove(move,timeStr){
+  const txt = move ? `${move} (${timeStr})` : 'None';
+  document.getElementById('last-move').textContent = txt;
+}
+function updateTurnDisplay(){
+  document.getElementById('turn-color').textContent =
+    game.turn()==='w' ? 'White' : 'Black';
+}
+function highlightLegalMoves(square){
+  const moves = game.moves({square,verbose:true});
+  if(!moves.length) return;
+  for(const mv of moves){
+    $(`#board .square-${mv.to}`).addClass('highlight-legal');
+  }
+}
+function removeHighlights(){
+  $('#board .square-55d63').removeClass('highlight-legal');
+}
+
+function startGame(){
+  gameOver=false;
+  const sel = document.getElementById('color-select').value;
+  playerColor = sel==='random' ? (Math.random()<.5?'white':'black') : sel;
+  game = new Chess();
+  document.getElementById('choose-side').style.display='none';
+
+  board = Chessboard('board',{
+    draggable:true, position:'start', orientation:playerColor,
+    onDrop:handleMove,
+    onMouseoverSquare:(sq)=>{ if(!game.game_over()){
+      const t=game.turn();
+      if((playerColor==='white'&&t==='w')||(playerColor==='black'&&t==='b'))
+        highlightLegalMoves(sq);
+    }},
+    onMouseoutSquare:removeHighlights
+  });
+
+  updateLastMove(null,'00:00.00');
+  updateTurnDisplay();
+  (playerColor==='white') ? startTimer() : engineMove();  
+}
+
+async function handleMove(src,tgt){
+  if(gameOver) return 'snapback';
+  removeHighlights();
+
+  const mv = game.move({from:src,to:tgt,promotion:'q'});
+  if(!mv) return 'snapback';
+
+  const moveTime = formatTime(timeElapsed);  
+  updateLastMove(mv.san,moveTime);
+  board.position(game.fen()); updateTurnDisplay();
+
+  if(game.in_checkmate()){ alert('CHECKMATE! You Win!'); gameOver=true; return; }
+
+  startTimer();                               
+  await engineMove();
+}
+
+async function engineMove(){
+  try{
+    const lastMove = game.history().slice(-1)[0];
+    const res = await fetch('https://hedgehoglover23.pythonanywhere.com/move',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({move:lastMove, color:game.turn()==='w'?'black':'white'})
+    });
+    const data = await res.json();
+    if(!data.move){ alert("Engine didn't return a move."); return; }
+
+    const moveTime = formatTime(timeElapsed); 
+    const mv = game.move(data.move);
+    if(!mv){ alert("Invalid engine move: "+data.move); return; }
+    updateLastMove(data.move,moveTime);
+
+    board.position(game.fen()); updateTurnDisplay();
+
+    if(game.in_checkmate()){ alert('CHECKMATE! You Lose!'); gameOver=true; }
+
+    startTimer();                            
+  }catch(e){ alert('Could not reach engine.'); console.error(e); }
+}
+</script>
+</body>
+</html>
